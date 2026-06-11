@@ -168,7 +168,7 @@ function App() {
     setCurrentModel(MODELS[provider][0].id);
   };
 
-  // Main send function with proper model + thinking
+  // Main send function with correct thinking config
   const sendMessage = async () => {
     if (!input.trim() || !currentChatId || isLoading) return;
     const userMessage = input.trim();
@@ -210,12 +210,12 @@ function App() {
           ]
         };
 
-        // Add thinking level for Gemini
+        // Correct thinking config for Gemini (thinkingConfig + thinkingLevel)
         if (thinkingLevel) {
-          body.generationConfig.thinking = { thinking_level: thinkingLevel };
+          body.generationConfig.thinkingConfig = { thinkingLevel: thinkingLevel };
         }
 
-        addToLog(`Gemini ${currentModel} → thinking:${thinkingLevel}`);
+        addToLog(`Gemini ${currentModel} → thinkingLevel:${thinkingLevel}`);
         const res = await fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
         const data = await res.json();
         if (data.error) throw new Error(data.error.message || JSON.stringify(data.error));
@@ -233,7 +233,6 @@ function App() {
           top_p: settings.topP,
         };
 
-        // Add reasoning effort for supported models
         if (thinkingLevel) {
           body.reasoning = { effort: thinkingLevel };
         }
@@ -480,7 +479,7 @@ function App() {
                 </div>
               </div>
 
-              {/* Thinking Level / Budget */}
+              {/* Thinking Level / Reasoning */}
               <div>
                 <div className="flex items-center gap-2 mb-3 text-[#d4af37]">
                   <Zap size={16} /> <span className="font-medium tracking-widest text-xs">THINKING / REASONING</span>
@@ -496,7 +495,7 @@ function App() {
                     </button>
                   ))}
                 </div>
-                <p className="text-[10px] text-white/40 mt-1.5">Controls how much the model thinks before answering (affects speed & quality).</p>
+                <p className="text-[10px] text-white/40 mt-1.5">Controls how much the model thinks before answering.</p>
               </div>
 
               {/* Avatar */}
