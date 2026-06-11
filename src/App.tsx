@@ -10,7 +10,6 @@ import type { Provider, Message, Chat, ApiKeys, Settings as AppSettings } from '
 const MODELS: Record<Provider, { id: string; name: string }[]> = {
   gemini: [
     { id: 'gemini-3.5-flash', name: 'Gemini 3.5 Flash' },
-    { id: 'gemini-3.1-flash', name: 'Gemini 3.1 Flash' },
   ],
   openai: [
     { id: 'gpt-4o-mini', name: 'GPT-4o Mini' },
@@ -210,7 +209,7 @@ function App() {
           ]
         };
 
-        // Correct thinking config for Gemini (thinkingConfig + thinkingLevel)
+        // Correct thinking config for Gemini
         if (thinkingLevel) {
           body.generationConfig.thinkingConfig = { thinkingLevel: thinkingLevel };
         }
