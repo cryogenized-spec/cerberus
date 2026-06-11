@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { 
-  Send, Mic, MicOff, Settings, Plus, Trash2, Edit2, Zap, Key, MessageSquare 
+  Send, Mic, MicOff, Settings, Plus, Trash2, Edit2, Zap, Key, MessageSquare, Menu, X, User 
 } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
@@ -26,16 +26,19 @@ function App() {
   const [isLoading, setIsLoading] = useState(false);
   const [isListening, setIsListening] = useState(false);
   const [showSettings, setShowSettings] = useState(false);
+  const [showDrawer, setShowDrawer] = useState(false); // Mobile drawer
   const [currentProvider, setCurrentProvider] = useState<Provider>('gemini');
   const [apiKeys, setApiKeys] = useState<ApiKeys>({ gemini: '', openai: '', xai: '' });
   const [settings, setSettings] = useState<AppSettings>(DEFAULT_SETTINGS);
   const [apiLog, setApiLog] = useState<string[]>([]);
   const [editingChatId, setEditingChatId] = useState<string | null>(null);
   const [editTitle, setEditTitle] = useState('');
+  const [characterAvatar, setCharacterAvatar] = useState<string | null>(null); // Base64 avatar
 
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const recognitionRef = useRef<any>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   const currentChat = chats.find(c => c.id === currentChatId);
 
@@ -53,35 +56,30 @@ function App() {
     const savedProvider = localStorage.getItem('cerberus_provider') as Provider;
     if (savedProvider) setCurrentProvider(savedProvider);
 
-    // Create initial chat if none
+    const savedAvatar = localStorage.getItem('cerberus_avatar');
+    if (savedAvatar) setCharacterAvatar(savedAvatar);
+
     if (!savedChats || JSON.parse(savedChats).length === 0) {
       createNewChat();
     }
   }, []);
 
   // Save to localStorage
-  useEffect(() => {
-    localStorage.setItem('cerberus_chats', JSON.stringify(chats));
-  }, [chats]);
+  useEffect(() => { localStorage.setItem('cerberus_chats', JSON.stringify(chats)); }, [chats]);
+  useEffect(() => { localStorage.setItem('cerberus_api_keys', JSON.stringify(apiKeys)); }, [apiKeys]);
+  useEffect(() => { localStorage.setItem('cerberus_settings', JSON.stringify(settings)); }, [settings]);
+  useEffect(() => { localStorage.setItem('cerberus_provider', currentProvider); }, [currentProvider]);
+  useEffect(() => { 
+    if (characterAvatar) localStorage.setItem('cerberus_avatar', characterAvatar); 
+    else localStorage.removeItem('cerberus_avatar');
+  }, [characterAvatar]);
 
-  useEffect(() => {
-    localStorage.setItem('cerberus_api_keys', JSON.stringify(apiKeys));
-  }, [apiKeys]);
-
-  useEffect(() => {
-    localStorage.setItem('cerberus_settings', JSON.stringify(settings));
-  }, [settings]);
-
-  useEffect(() => {
-    localStorage.setItem('cerberus_provider', currentProvider);
-  }, [currentProvider]);
-
-  // Auto scroll to bottom
+  // Auto scroll
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [currentChat?.messages, isLoading]);
 
-  // Voice recognition setup
+  // Voice setup (same as before)
   useEffect(() => {
     if ('SpeechRecognition' in window || 'webkitSpeechRecognition' in window) {
       const SpeechRecognitionAPI = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
@@ -95,247 +93,152 @@ function App() {
         setInput(prev => (prev ? prev + ' ' : '') + transcript);
         setIsListening(false);
       };
-
-      recognitionRef.current.onerror = () => {
-        setIsListening(false);
-        addToLog('Voice recognition error');
-      };
-
-      recognitionRef.current.onend = () => {
-        setIsListening(false);
-      };
+      recognitionRef.current.onerror = () => { setIsListening(false); addToLog('Voice error'); };
+      recognitionRef.current.onend = () => setIsListening(false);
     }
   }, []);
 
   const createNewChat = () => {
-    const newChat: Chat = {
-      id: Date.now().toString(36),
-      title: 'New Conversation',
-      messages: [],
-      createdAt: Date.now(),
-      updatedAt: Date.now(),
-    };
+    const newChat: Chat = { id: Date.now().toString(36), title: 'New Conversation', messages: [], createdAt: Date.now(), updatedAt: Date.now() };
     setChats(prev => [newChat, ...prev]);
     setCurrentChatId(newChat.id);
     setInput('');
+    setShowDrawer(false);
   };
 
   const deleteChat = (id: string) => {
-    if (chats.length === 1) {
-      createNewChat();
-      setChats(prev => prev.filter(c => c.id !== id));
-      return;
-    }
+    if (chats.length === 1) { createNewChat(); setChats(prev => prev.filter(c => c.id !== id)); return; }
     const remaining = chats.filter(c => c.id !== id);
     setChats(remaining);
-    if (currentChatId === id) {
-      setCurrentChatId(remaining[0].id);
-    }
+    if (currentChatId === id) setCurrentChatId(remaining[0].id);
   };
 
   const updateChatTitle = (id: string, newTitle: string) => {
-    setChats(prev => prev.map(chat => 
-      chat.id === id ? { ...chat, title: newTitle || 'Untitled' } : chat
-    ));
-    setEditingChatId(null);
-    setEditTitle('');
+    setChats(prev => prev.map(chat => chat.id === id ? { ...chat, title: newTitle || 'Untitled' } : chat));
+    setEditingChatId(null); setEditTitle('');
   };
 
   const addMessage = (role: 'user' | 'assistant', content: string) => {
     if (!currentChatId) return;
-
-    const newMessage: Message = {
-      id: Date.now().toString(36),
-      role,
-      content,
-      timestamp: Date.now(),
-    };
-
+    const newMessage: Message = { id: Date.now().toString(36), role, content, timestamp: Date.now() };
     setChats(prev => prev.map(chat => {
       if (chat.id === currentChatId) {
-        const updatedMessages = [...chat.messages, newMessage];
-        // Auto title from first user message
+        const updated = [...chat.messages, newMessage];
         let newTitle = chat.title;
-        if (chat.messages.length === 0 && role === 'user') {
-          newTitle = content.slice(0, 40) + (content.length > 40 ? '...' : '');
-        }
-        return {
-          ...chat,
-          messages: updatedMessages,
-          title: newTitle,
-          updatedAt: Date.now(),
-        };
+        if (chat.messages.length === 0 && role === 'user') newTitle = content.slice(0, 40) + (content.length > 40 ? '...' : '');
+        return { ...chat, messages: updated, title: newTitle, updatedAt: Date.now() };
       }
       return chat;
     }));
   };
 
   const addToLog = (message: string) => {
-    const timestamp = new Date().toLocaleTimeString();
-    setApiLog(prev => [`[${timestamp}] ${message}`, ...prev].slice(0, 50));
+    const ts = new Date().toLocaleTimeString();
+    setApiLog(prev => [`[${ts}] ${message}`, ...prev].slice(0, 50));
   };
 
-  // Main send function
   const sendMessage = async () => {
     if (!input.trim() || !currentChatId || isLoading) return;
-
     const userMessage = input.trim();
     setInput('');
     addMessage('user', userMessage);
-
     setIsLoading(true);
 
-    const currentApiKey = apiKeys[currentProvider];
-    if (!currentApiKey) {
-      addMessage('assistant', `Please add your ${PROVIDERS.find(p => p.id === currentProvider)?.name} API key in Settings.`);
-      setIsLoading(false);
-      setShowSettings(true);
-      return;
+    const key = apiKeys[currentProvider];
+    if (!key) {
+      addMessage('assistant', `Add your ${PROVIDERS.find(p => p.id === currentProvider)?.name} key in Settings.`);
+      setIsLoading(false); setShowSettings(true); return;
     }
 
     try {
-      const messagesForAPI = currentChat?.messages || [];
-      const fullMessages = [
-        { role: 'system', content: settings.systemPrompt },
-        ...messagesForAPI.map(m => ({ role: m.role, content: m.content })),
-        { role: 'user', content: userMessage }
-      ];
-
-      let responseText = '';
+      const msgs = currentChat?.messages || [];
+      const full = [{ role: 'system', content: settings.systemPrompt }, ...msgs.map(m => ({role: m.role, content: m.content})), { role: 'user', content: userMessage }];
+      let text = '';
 
       if (currentProvider === 'gemini') {
-        const geminiUrl = `https://generativelanguage.googleapis.com/v1beta/models/${PROVIDERS[0].model}:generateContent?key=${currentApiKey}`;
-        
-        const geminiBody = {
-          contents: [{ parts: [{ text: fullMessages.map(m => `${m.role}: ${m.content}`).join('\n\n') }] }],
-          generationConfig: {
-            temperature: settings.temperature,
-            maxOutputTokens: settings.maxTokens,
-            topP: settings.topP,
-          },
-          safetySettings: [
-            { category: "HARM_CATEGORY_HARASSMENT", threshold: "BLOCK_NONE" },
-            { category: "HARM_CATEGORY_HATE_SPEECH", threshold: "BLOCK_NONE" },
-            { category: "HARM_CATEGORY_SEXUALLY_EXPLICIT", threshold: "BLOCK_NONE" },
-            { category: "HARM_CATEGORY_DANGEROUS_CONTENT", threshold: "BLOCK_NONE" },
-          ]
-        };
-
-        addToLog(`Gemini request \u2192 temp:${settings.temperature}`);
-        
-        const res = await fetch(geminiUrl, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(geminiBody)
-        });
-
+        const url = `https://generativelanguage.googleapis.com/v1beta/models/${PROVIDERS[0].model}:generateContent?key=${key}`;
+        const body = { contents: [{ parts: [{ text: full.map(m => `${m.role}: ${m.content}`).join('\n\n') }] }], generationConfig: { temperature: settings.temperature, maxOutputTokens: settings.maxTokens, topP: settings.topP }, safetySettings: [ {category:"HARM_CATEGORY_HARASSMENT",threshold:"BLOCK_NONE"}, {category:"HARM_CATEGORY_HATE_SPEECH",threshold:"BLOCK_NONE"}, {category:"HARM_CATEGORY_SEXUALLY_EXPLICIT",threshold:"BLOCK_NONE"}, {category:"HARM_CATEGORY_DANGEROUS_CONTENT",threshold:"BLOCK_NONE"} ] };
+        addToLog(`Gemini → temp:${settings.temperature}`);
+        const res = await fetch(url, { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(body) });
         const data = await res.json();
-        
-        if (data.error) {
-          throw new Error(data.error.message || 'Gemini API error');
-        }
-        
-        responseText = data.candidates?.[0]?.content?.parts?.[0]?.text || 'No response from Gemini.';
-        
-      } else if (currentProvider === 'openai' || currentProvider === 'xai') {
-        const isXAI = currentProvider === 'xai';
-        const baseUrl = isXAI ? 'https://api.x.ai/v1' : 'https://api.openai.com/v1';
+        if (data.error) throw new Error(data.error.message);
+        text = data.candidates?.[0]?.content?.parts?.[0]?.text || 'No response.';
+      } else {
+        const isX = currentProvider === 'xai';
+        const base = isX ? 'https://api.x.ai/v1' : 'https://api.openai.com/v1';
         const model = PROVIDERS.find(p => p.id === currentProvider)?.model || 'gpt-4o-mini';
-
-        const openaiBody = {
-          model,
-          messages: fullMessages,
-          temperature: settings.temperature,
-          max_tokens: settings.maxTokens,
-          top_p: settings.topP,
-        };
-
-        addToLog(`${isXAI ? 'xAI' : 'OpenAI'} request \u2192 model:${model}`);
-
-        const res = await fetch(`${baseUrl}/chat/completions`, {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            'Authorization': `Bearer ${currentApiKey}`,
-          },
-          body: JSON.stringify(openaiBody)
-        });
-
+        const body = { model, messages: full, temperature: settings.temperature, max_tokens: settings.maxTokens, top_p: settings.topP };
+        addToLog(`${isX ? 'xAI' : 'OpenAI'} → ${model}`);
+        const res = await fetch(`${base}/chat/completions`, { method:'POST', headers:{'Content-Type':'application/json', 'Authorization':`Bearer ${key}`}, body:JSON.stringify(body) });
         const data = await res.json();
-
-        if (data.error) {
-          throw new Error(data.error.message || 'API error');
-        }
-
-        responseText = data.choices?.[0]?.message?.content || 'No response.';
+        if (data.error) throw new Error(data.error.message);
+        text = data.choices?.[0]?.message?.content || 'No response.';
       }
-
-      addMessage('assistant', responseText);
-      addToLog(`Response received (${responseText.length} chars)`);
-
-    } catch (error: any) {
-      console.error(error);
-      const errorMsg = `Error: ${error.message || 'Failed to get response'}`;
-      addMessage('assistant', errorMsg);
-      addToLog(errorMsg);
-    } finally {
-      setIsLoading(false);
-    }
+      addMessage('assistant', text);
+      addToLog(`Response (${text.length} chars)`);
+    } catch(e: any) {
+      const msg = `Error: ${e.message}`;
+      addMessage('assistant', msg); addToLog(msg);
+    } finally { setIsLoading(false); }
   };
 
-  // Voice to text
-  const toggleVoiceInput = () => {
-    if (!recognitionRef.current) {
-      alert('Voice recognition not supported in this browser. Try Chrome or Edge.');
-      return;
-    }
-
-    if (isListening) {
-      recognitionRef.current.stop();
-      setIsListening(false);
-    } else {
-      try {
-        recognitionRef.current.start();
-        setIsListening(true);
-      } catch (e) {
-        addToLog('Voice start failed');
-        setIsListening(false);
-      }
-    }
+  const toggleVoice = () => {
+    if (!recognitionRef.current) { alert('Voice not supported. Use Chrome/Edge.'); return; }
+    if (isListening) { recognitionRef.current.stop(); setIsListening(false); }
+    else { try { recognitionRef.current.start(); setIsListening(true); } catch { addToLog('Voice failed'); setIsListening(false); } }
   };
 
-  // Edit message (simple inline for last user message)
-  const editLastMessage = () => {
-    if (!currentChat || currentChat.messages.length === 0) return;
-    
-    const lastUserMsg = [...currentChat.messages].reverse().find(m => m.role === 'user');
-    if (lastUserMsg) {
-      setInput(lastUserMsg.content);
-    }
+  const editLast = () => {
+    if (!currentChat) return;
+    const last = [...currentChat.messages].reverse().find(m => m.role === 'user');
+    if (last) setInput(last.content);
   };
 
-  // Handle key press
-  const handleKeyDown = (e: React.KeyboardEvent) => {
-    if (e.key === 'Enter' && !e.shiftKey) {
-      e.preventDefault();
-      sendMessage();
-    }
+  const handleKey = (e: React.KeyboardEvent) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendMessage(); } };
+
+  const updateSetting = (k: keyof AppSettings, v: any) => setSettings(p => ({...p, [k]: v}));
+  const updateKey = (p: Provider, v: string) => setApiKeys(prev => ({...prev, [p]: v}));
+
+  // Avatar upload
+  const handleAvatarUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = (ev) => {
+      const base64 = ev.target?.result as string;
+      setCharacterAvatar(base64);
+    };
+    reader.readAsDataURL(file);
   };
 
-  // Update settings
-  const updateSetting = (key: keyof AppSettings, value: any) => {
-    setSettings(prev => ({ ...prev, [key]: value }));
-  };
-
-  // Update API key
-  const updateApiKey = (provider: Provider, value: string) => {
-    setApiKeys(prev => ({ ...prev, [provider]: value }));
-  };
+  const removeAvatar = () => setCharacterAvatar(null);
 
   return (
-    <div className="flex h-screen bg-[#0a0a0c] text-white overflow-hidden">
-      {/* Sidebar - Chat History */}
-      <div className="w-72 bg-[#1a0505] border-r border-[#4a0e0e] flex flex-col">
+    <div className="flex h-[100dvh] bg-[#0a0a0c] text-white overflow-hidden">
+      {/* Mobile Drawer for History */}
+      {showDrawer && (
+        <div className="fixed inset-0 z-50 md:hidden" onClick={() => setShowDrawer(false)}>
+          <div className="absolute left-0 top-0 h-full w-72 bg-[#1a0505] border-r border-[#4a0e0e] p-4" onClick={e => e.stopPropagation()}>
+            <div className="flex justify-between items-center mb-4">
+              <div className="font-semibold">Chats</div>
+              <button onClick={() => setShowDrawer(false)}><X size={20} /></button>
+            </div>
+            <button onClick={createNewChat} className="w-full mb-3 flex items-center justify-center gap-2 py-2 bg-[#d4af37] text-black rounded-2xl font-medium">
+              <Plus size={16} /> New Chat
+            </button>
+            <div className="space-y-1 overflow-y-auto max-h-[70vh]">
+              {chats.map(chat => (
+                <div key={chat.id} onClick={() => { setCurrentChatId(chat.id); setShowDrawer(false); }} className={`px-3 py-2.5 rounded-2xl cursor-pointer ${currentChatId === chat.id ? 'bg-[#4a0e0e]' : 'hover:bg-[#2d0a0a]'}`}>
+                  <div className="font-medium truncate text-sm">{chat.title}</div>
+                </div>
+              ))}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Sidebar (Desktop only) */}
+      <div className="hidden md:flex w-72 bg-[#1a0505] border-r border-[#4a0e0e] flex-col">
         <div className="p-4 border-b border-[#4a0e0e] flex items-center justify-between">
           <div className="flex items-center gap-3">
             <div className="w-9 h-9 rounded-xl bg-gradient-to-br from-[#7f1d1d] to-[#d4af37] flex items-center justify-center">
@@ -346,362 +249,198 @@ function App() {
               <div className="text-[10px] text-[#d4af37]/70 -mt-1">PRIVATE AI</div>
             </div>
           </div>
-          <button 
-            onClick={createNewChat}
-            className="p-2 hover:bg-[#4a0e0e] rounded-xl transition-colors"
-            title="New Chat"
-          >
-            <Plus size={18} />
-          </button>
+          <button onClick={createNewChat} className="p-2 hover:bg-[#4a0e0e] rounded-xl"><Plus size={18} /></button>
         </div>
-
         <div className="flex-1 overflow-y-auto p-2 space-y-1">
-          {chats.length === 0 && (
-            <div className="text-center text-sm text-white/50 py-8">No chats yet</div>
-          )}
+          {chats.length === 0 && <div className="text-center text-sm text-white/50 py-8">No chats</div>}
           {chats.map(chat => (
-            <div 
-              key={chat.id}
-              onClick={() => setCurrentChatId(chat.id)}
-              className={`group flex items-center justify-between px-3 py-2.5 rounded-2xl cursor-pointer transition-all ${
-                currentChatId === chat.id 
-                  ? 'bg-[#4a0e0e] text-white' 
-                  : 'hover:bg-[#2d0a0a] text-white/80'
-              }`}
-            >
-              <div className="flex-1 min-w-0 pr-2">
+            <div key={chat.id} onClick={() => setCurrentChatId(chat.id)} className={`group px-3 py-2.5 rounded-2xl cursor-pointer flex justify-between items-center ${currentChatId === chat.id ? 'bg-[#4a0e0e]' : 'hover:bg-[#2d0a0a]'}`}>
+              <div className="min-w-0">
                 {editingChatId === chat.id ? (
-                  <input
-                    type="text"
-                    value={editTitle}
-                    onChange={(e) => setEditTitle(e.target.value)}
-                    onBlur={() => updateChatTitle(chat.id, editTitle)}
-                    onKeyDown={(e) => {
-                      if (e.key === 'Enter') updateChatTitle(chat.id, editTitle);
-                      if (e.key === 'Escape') { setEditingChatId(null); setEditTitle(''); }
-                    }}
-                    className="bg-black/50 w-full px-2 py-1 rounded text-sm outline-none border border-[#d4af37]/30"
-                    autoFocus
-                  />
-                ) : (
-                  <div className="font-medium truncate text-sm">{chat.title}</div>
-                )}
-                <div className="text-[10px] text-white/40 mt-0.5">
-                  {new Date(chat.updatedAt).toLocaleDateString()}
-                </div>
+                  <input type="text" value={editTitle} onChange={e=>setEditTitle(e.target.value)} onBlur={()=>updateChatTitle(chat.id, editTitle)} onKeyDown={e=>{if(e.key==='Enter')updateChatTitle(chat.id,editTitle); if(e.key==='Escape'){setEditingChatId(null);setEditTitle('');}}} className="bg-black/50 w-full px-2 py-1 rounded text-sm" autoFocus />
+                ) : <div className="font-medium truncate text-sm">{chat.title}</div> }
+                <div className="text-[10px] text-white/40">{new Date(chat.updatedAt).toLocaleDateString()}</div>
               </div>
-              
-              <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
-                <button 
-                  onClick={(e) => { e.stopPropagation(); setEditingChatId(chat.id); setEditTitle(chat.title); }}
-                  className="p-1.5 hover:bg-white/10 rounded-lg"
-                >
-                  <Edit2 size={14} />
-                </button>
-                <button 
-                  onClick={(e) => { e.stopPropagation(); deleteChat(chat.id); }}
-                  className="p-1.5 hover:bg-red-900/30 hover:text-red-400 rounded-lg"
-                >
-                  <Trash2 size={14} />
-                </button>
+              <div className="flex gap-1 opacity-0 group-hover:opacity-100">
+                <button onClick={e=>{e.stopPropagation(); setEditingChatId(chat.id); setEditTitle(chat.title);}} className="p-1.5 hover:bg-white/10 rounded"><Edit2 size={14}/></button>
+                <button onClick={e=>{e.stopPropagation(); deleteChat(chat.id);}} className="p-1.5 hover:bg-red-900/30 rounded text-red-400"><Trash2 size={14}/></button>
               </div>
             </div>
           ))}
         </div>
-
-        <div className="p-3 border-t border-[#4a0e0e] text-xs text-white/40 text-center">
-          {chats.length} conversation{chats.length !== 1 ? 's' : ''}
-        </div>
       </div>
 
-      {/* Main Chat Area */}
-      <div className="flex-1 flex flex-col">
-        {/* Top Bar */}
-        <div className="h-14 border-b border-[#4a0e0e] px-6 flex items-center justify-between bg-[#1a0505]/80 backdrop-blur-lg z-10">
-          <div className="flex items-center gap-4">
-            <div className="flex items-center gap-2">
-              <div 
-                className="w-3 h-3 rounded-full" 
-                style={{ backgroundColor: PROVIDERS.find(p => p.id === currentProvider)?.color }}
-              />
-              <span className="font-medium">{PROVIDERS.find(p => p.id === currentProvider)?.name}</span>
-              <span className="text-xs px-2 py-0.5 bg-white/10 rounded-full text-white/60">
-                {PROVIDERS.find(p => p.id === currentProvider)?.model}
-              </span>
+      {/* Main Content */}
+      <div className="flex-1 flex flex-col min-w-0">
+        {/* Top Bar - Mobile Friendly */}
+        <div className="h-14 border-b border-[#4a0e0e] px-4 md:px-6 flex items-center justify-between bg-[#1a0505]/90 backdrop-blur z-40">
+          <div className="flex items-center gap-3">
+            {/* Mobile Menu Button */}
+            <button onClick={() => setShowDrawer(true)} className="md:hidden p-2 -ml-2">
+              <Menu size={20} />
+            </button>
+            
+            <div className="flex items-center gap-3">
+              {characterAvatar ? (
+                <img src={characterAvatar} alt="Character" className="w-8 h-8 rounded-full object-cover border border-[#d4af37]/30" />
+              ) : (
+                <div className="w-8 h-8 rounded-full bg-gradient-to-br from-[#7f1d1d] to-[#d4af37] flex items-center justify-center">
+                  <User size={16} className="text-black" />
+                </div>
+              )}
+              <div>
+                <div className="font-semibold tracking-tight">Cerberus</div>
+                <div className="text-[10px] text-white/50 -mt-0.5">{PROVIDERS.find(p => p.id === currentProvider)?.name}</div>
+              </div>
             </div>
           </div>
 
           <div className="flex items-center gap-2">
-            <button 
-              onClick={() => setShowSettings(true)}
-              className="flex items-center gap-2 px-4 py-1.5 text-sm hover:bg-white/5 rounded-2xl transition-colors border border-white/10"
-            >
-              <Settings size={16} /> Settings
+            <button onClick={() => setShowSettings(true)} className="flex items-center gap-1.5 px-3 py-1.5 text-sm hover:bg-white/5 rounded-2xl border border-white/10">
+              <Settings size={16} /> <span className="hidden sm:inline">Settings</span>
             </button>
-            <button 
-              onClick={createNewChat}
-              className="flex items-center gap-2 px-4 py-1.5 text-sm bg-white/5 hover:bg-white/10 rounded-2xl transition-colors"
-            >
-              <Plus size={16} /> New Chat
+            <button onClick={createNewChat} className="hidden md:flex items-center gap-1.5 px-3 py-1.5 text-sm bg-white/5 hover:bg-white/10 rounded-2xl">
+              <Plus size={16} /> New
             </button>
           </div>
         </div>
 
-        {/* Messages */}
-        <div className="flex-1 overflow-y-auto chat-container px-6 py-8 bg-[#0a0a0c]">
+        {/* Chat Area */}
+        <div className="flex-1 overflow-y-auto chat-container px-4 md:px-6 py-6 bg-[#0a0a0c]" style={{ aspectRatio: '9 / 16' }}>
           {!currentChat || currentChat.messages.length === 0 ? (
-            <div className="h-full flex flex-col items-center justify-center text-center max-w-md mx-auto">
-              <div className="w-20 h-20 rounded-3xl bg-gradient-to-br from-[#7f1d1d] via-[#4a0e0e] to-black flex items-center justify-center mb-6">
-                <MessageSquare size={42} className="text-[#d4af37]" />
+            <div className="h-full flex flex-col items-center justify-center text-center px-4">
+              <div className="w-16 h-16 rounded-3xl bg-gradient-to-br from-[#7f1d1d] to-black flex items-center justify-center mb-5">
+                <MessageSquare size={32} className="text-[#d4af37]" />
               </div>
-              <h2 className="text-3xl font-semibold tracking-tighter mb-2">Cerberus is ready.</h2>
-              <p className="text-white/60 mb-8">Start a conversation. Your keys and data stay in your browser.</p>
-              
-              <div className="grid grid-cols-1 gap-2 w-full max-w-xs text-sm">
-                {PROVIDERS.map(p => (
-                  <button 
-                    key={p.id}
-                    onClick={() => setCurrentProvider(p.id)}
-                    className={`px-4 py-3 rounded-2xl border flex items-center justify-between transition-all ${currentProvider === p.id ? 'border-[#d4af37] bg-[#d4af37]/10' : 'border-white/10 hover:border-white/30'}`}
-                  >
-                    <span>{p.name}</span>
-                    <span className="text-xs opacity-60">{p.model}</span>
-                  </button>
-                ))}
-              </div>
+              <h2 className="text-2xl font-semibold tracking-tight mb-2">Cerberus is listening.</h2>
+              <p className="text-white/60 max-w-xs">Tap the mic or type to begin. Your data stays private.</p>
             </div>
           ) : (
-            <div className="max-w-3xl mx-auto space-y-6">
+            <div className="max-w-2xl mx-auto space-y-5">
               {currentChat.messages.map((msg) => (
-                <div 
-                  key={msg.id} 
-                  className={`flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}
-                >
-                  <div className={`message px-5 py-3.5 rounded-3xl text-[15px] leading-relaxed ${
-                    msg.role === 'user' 
-                      ? 'bg-[#d4af37] text-black rounded-br-none' 
-                      : 'bg-[#1a0505] border border-[#4a0e0e]'
-                  }`}>
-                    {msg.role === 'assistant' && (
-                      <div className="flex items-center gap-2 mb-1.5 text-xs text-[#d4af37]/70 font-mono tracking-widest">
-                        CERBERUS
+                <div key={msg.id} className={`flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}>
+                  <div className={`max-w-[85%] px-4 py-3 rounded-3xl text-[15px] leading-relaxed ${msg.role === 'user' ? 'bg-[#d4af37] text-black rounded-br-none' : 'bg-[#1a0505] border border-[#4a0e0e]'}`}>
+                    {msg.role === 'assistant' && characterAvatar && (
+                      <div className="flex items-center gap-2 mb-1.5">
+                        <img src={characterAvatar} className="w-5 h-5 rounded-full object-cover" alt="" />
+                        <span className="text-xs text-[#d4af37]/70 font-mono tracking-widest">CERBERUS</span>
                       </div>
                     )}
                     <div className="prose prose-invert prose-sm max-w-none">
-                      <ReactMarkdown remarkPlugins={[remarkGfm]}>
-                        {msg.content}
-                      </ReactMarkdown>
+                      <ReactMarkdown remarkPlugins={[remarkGfm]}>{msg.content}</ReactMarkdown>
                     </div>
                   </div>
                 </div>
               ))}
-
-              {isLoading && (
-                <div className="flex justify-start">
-                  <div className="bg-[#1a0505] border border-[#4a0e0e] px-5 py-3.5 rounded-3xl flex items-center gap-3 text-sm text-white/70">
-                    <div className="flex gap-1">
-                      <div className="w-1.5 h-1.5 bg-[#d4af37] rounded-full animate-bounce" />
-                      <div className="w-1.5 h-1.5 bg-[#d4af37] rounded-full animate-bounce delay-150" />
-                      <div className="w-1.5 h-1.5 bg-[#d4af37] rounded-full animate-bounce delay-300" />
-                    </div>
-                    Thinking...
-                  </div>
-                </div>
-              )}
+              {isLoading && <div className="text-white/60 text-sm pl-1">Cerberus is thinking…</div>}
               <div ref={messagesEndRef} />
             </div>
           )}
         </div>
 
-        {/* Input Area */}
-        <div className="border-t border-[#4a0e0e] p-4 bg-[#1a0505]">
-          <div className="max-w-3xl mx-auto">
-            <div className="flex items-end gap-3 bg-[#0a0a0c] border border-[#4a0e0e] rounded-3xl p-2 pl-5">
-              <textarea
-                ref={textareaRef}
-                value={input}
-                onChange={(e) => setInput(e.target.value)}
-                onKeyDown={handleKeyDown}
-                placeholder="Message Cerberus..."
-                className="inline-editor flex-1 bg-transparent outline-none resize-none max-h-40 py-2 text-[15px] placeholder:text-white/40"
-                rows={1}
-              />
-              
-              <div className="flex items-center gap-1 pr-1">
-                <button
-                  onClick={toggleVoiceInput}
-                  className={`p-3 rounded-2xl transition-all ${isListening ? 'bg-red-600 text-white' : 'hover:bg-white/5 text-white/70'}`}
-                  title={isListening ? "Stop listening" : "Voice input"}
-                >
-                  {isListening ? <MicOff size={18} /> : <Mic size={18} />}
-                </button>
-
-                <button
-                  onClick={editLastMessage}
-                  className="p-3 hover:bg-white/5 rounded-2xl text-white/60 hover:text-white transition-colors"
-                  title="Edit last message"
-                >
-                  <Edit2 size={17} />
-                </button>
-
-                <button
-                  onClick={sendMessage}
-                  disabled={!input.trim() || isLoading}
-                  className="p-3.5 bg-[#d4af37] hover:bg-[#e8c36b] disabled:opacity-40 text-black rounded-2xl transition-all active:scale-[0.985]"
-                >
-                  <Send size={18} />
-                </button>
-              </div>
-            </div>
-            
-            <div className="text-[10px] text-center mt-2 text-white/30 tracking-widest">
-              CERBERUS • {currentProvider.toUpperCase()} • LOCAL HISTORY
-            </div>
+        {/* Input - Mobile Optimized */}
+        <div className="border-t border-[#4a0e0e] p-3 bg-[#1a0505] safe-area-bottom">
+          <div className="max-w-2xl mx-auto flex items-end gap-2">
+            <textarea
+              ref={textareaRef}
+              value={input}
+              onChange={e => setInput(e.target.value)}
+              onKeyDown={handleKey}
+              placeholder="Message Cerberus..."
+              className="flex-1 bg-[#0a0a0c] border border-[#4a0e0e] rounded-3xl px-5 py-3 text-[15px] resize-none max-h-32 outline-none placeholder:text-white/40"
+              rows={1}
+            />
+            <button onClick={toggleVoice} className={`p-3.5 rounded-3xl transition-all ${isListening ? 'bg-red-600' : 'bg-[#1a0505] border border-[#4a0e0e] hover:bg-[#2d0a0a]'}`}>
+              {isListening ? <MicOff size={18} /> : <Mic size={18} />}
+            </button>
+            <button onClick={editLast} className="p-3.5 rounded-3xl border border-[#4a0e0e] hover:bg-[#2d0a0a]">
+              <Edit2 size={17} />
+            </button>
+            <button onClick={sendMessage} disabled={!input.trim() || isLoading} className="p-3.5 bg-[#d4af37] text-black rounded-3xl disabled:opacity-50 active:scale-95 transition-transform">
+              <Send size={18} />
+            </button>
           </div>
+          <div className="text-center text-[9px] text-white/30 mt-1.5 tracking-widest">9:16 MOBILE • LOCAL ONLY</div>
         </div>
       </div>
 
-      {/* Settings Modal */}
+      {/* Settings Modal with Avatar Upload */}
       {showSettings && (
-        <div className="fixed inset-0 bg-black/90 z-50 flex items-center justify-center p-4" onClick={() => setShowSettings(false)}>
-          <div 
-            className="settings-modal bg-[#1a0505] border border-[#4a0e0e] rounded-3xl w-full max-w-2xl max-h-[90vh] overflow-hidden flex flex-col"
-            onClick={e => e.stopPropagation()}
-          >
-            <div className="px-8 pt-8 pb-6 border-b border-[#4a0e0e] flex items-center justify-between">
-              <div>
-                <div className="text-2xl font-semibold tracking-tight">Settings</div>
-                <div className="text-sm text-white/50">All data stays in your browser</div>
-              </div>
-              <button onClick={() => setShowSettings(false)} className="text-white/60 hover:text-white">✕</button>
+        <div className="fixed inset-0 bg-black/90 z-[60] flex items-center justify-center p-4" onClick={() => setShowSettings(false)}>
+          <div className="settings-modal bg-[#1a0505] border border-[#4a0e0e] rounded-3xl w-full max-w-lg max-h-[92vh] overflow-hidden flex flex-col" onClick={e=>e.stopPropagation()}>
+            <div className="px-6 pt-6 pb-4 border-b border-[#4a0e0e] flex justify-between items-center">
+              <div className="text-xl font-semibold tracking-tight">Settings</div>
+              <button onClick={() => setShowSettings(false)}><X size={20}/></button>
             </div>
 
-            <div className="p-8 overflow-y-auto flex-1 space-y-8 text-sm">
-              {/* Provider & API Keys */}
-              <div>
-                <div className="flex items-center gap-2 mb-4 text-[#d4af37]">
-                  <Key size={16} /> <span className="font-medium tracking-widest text-xs">API KEYS</span>
-                </div>
-                
-                <div className="space-y-4">
-                  {PROVIDERS.map(provider => (
-                    <div key={provider.id} className="flex items-center gap-4">
-                      <div className="w-28 text-right text-white/70">{provider.name}</div>
-                      <input
-                        type="password"
-                        value={apiKeys[provider.id]}
-                        onChange={(e) => updateApiKey(provider.id, e.target.value)}
-                        placeholder={`Enter ${provider.name} API key`}
-                        className="flex-1 bg-black border border-[#4a0e0e] rounded-2xl px-5 py-3 text-sm font-mono placeholder:text-white/30 focus:border-[#d4af37]/50 outline-none"
-                      />
-                      <button 
-                        onClick={() => setCurrentProvider(provider.id)}
-                        className={`px-4 py-2 text-xs rounded-2xl border transition-all ${currentProvider === provider.id ? 'border-[#d4af37] bg-[#d4af37]/10' : 'border-white/20 hover:bg-white/5'}`}
-                      >
-                        {currentProvider === provider.id ? 'ACTIVE' : 'USE'}
-                      </button>
-                    </div>
-                  ))}
-                </div>
-              </div>
-
-              {/* Model Parameters */}
-              <div>
-                <div className="flex items-center gap-2 mb-4 text-[#d4af37]">
-                  <Zap size={16} /> <span className="font-medium tracking-widest text-xs">MODEL PARAMETERS</span>
-                </div>
-                
-                <div className="space-y-6 pl-1">
-                  <div>
-                    <div className="flex justify-between mb-2 text-sm">
-                      <span>Temperature</span>
-                      <span className="font-mono text-[#d4af37]">{settings.temperature}</span>
-                    </div>
-                    <input 
-                      type="range" 
-                      min="0" 
-                      max="2" 
-                      step="0.1" 
-                      value={settings.temperature}
-                      onChange={(e) => updateSetting('temperature', parseFloat(e.target.value))}
-                      className="w-full accent-[#d4af37]"
-                    />
-                    <div className="flex justify-between text-[10px] text-white/40 mt-1">
-                      <div>Precise</div><div>Creative</div>
-                    </div>
-                  </div>
-
-                  <div className="grid grid-cols-2 gap-4">
-                    <div>
-                      <div className="text-sm mb-2">Max Tokens</div>
-                      <input 
-                        type="number" 
-                        value={settings.maxTokens}
-                        onChange={(e) => updateSetting('maxTokens', parseInt(e.target.value))}
-                        className="w-full bg-black border border-[#4a0e0e] rounded-2xl px-4 py-2.5 text-sm"
-                      />
-                    </div>
-                    <div>
-                      <div className="text-sm mb-2">Top P</div>
-                      <input 
-                        type="number" 
-                        step="0.05" 
-                        min="0" max="1"
-                        value={settings.topP}
-                        onChange={(e) => updateSetting('topP', parseFloat(e.target.value))}
-                        className="w-full bg-black border border-[#4a0e0e] rounded-2xl px-4 py-2.5 text-sm"
-                      />
-                    </div>
-                  </div>
-                </div>
-              </div>
-
-              {/* System Prompt */}
+            <div className="p-6 overflow-y-auto flex-1 space-y-8 text-sm">
+              {/* Avatar Upload */}
               <div>
                 <div className="flex items-center gap-2 mb-3 text-[#d4af37]">
-                  <MessageSquare size={16} /> <span className="font-medium tracking-widest text-xs">SYSTEM PROMPT</span>
+                  <User size={16} /> <span className="font-medium tracking-widest text-xs">CHARACTER AVATAR</span>
                 </div>
-                <textarea
-                  value={settings.systemPrompt}
-                  onChange={(e) => updateSetting('systemPrompt', e.target.value)}
-                  className="w-full h-32 bg-black border border-[#4a0e0e] rounded-3xl p-5 text-sm resize-y font-mono"
-                  placeholder="System instructions for the AI..."
-                />
+                <div className="flex items-center gap-4">
+                  {characterAvatar ? (
+                    <img src={characterAvatar} alt="Avatar" className="w-16 h-16 rounded-2xl object-cover border-2 border-[#d4af37]/30" />
+                  ) : (
+                    <div className="w-16 h-16 rounded-2xl bg-[#2d0a0a] flex items-center justify-center border border-[#4a0e0e]">
+                      <User size={28} className="text-white/40" />
+                    </div>
+                  )}
+                  <div className="flex-1">
+                    <input ref={fileInputRef} type="file" accept="image/*" onChange={handleAvatarUpload} className="hidden" />
+                    <button onClick={() => fileInputRef.current?.click()} className="px-4 py-2 bg-white/5 hover:bg-white/10 rounded-2xl text-sm w-full mb-2">
+                      Upload Photo
+                    </button>
+                    {characterAvatar && <button onClick={removeAvatar} className="text-xs text-red-400 hover:text-red-500">Remove avatar</button>}
+                  </div>
+                </div>
+                <p className="text-[10px] text-white/40 mt-1">Appears next to Cerberus messages</p>
               </div>
 
-              {/* API Log */}
+              {/* Rest of settings (keys, params, prompt, log) - same as before but compacted for mobile */}
               <div>
-                <div className="flex items-center justify-between mb-3">
-                  <div className="flex items-center gap-2 text-[#d4af37]">
-                    <span className="font-medium tracking-widest text-xs">API LOG</span>
+                <div className="flex items-center gap-2 mb-3 text-[#d4af37]"><Key size={16} /> <span className="font-medium tracking-widest text-xs">API KEYS</span></div>
+                {PROVIDERS.map(p => (
+                  <div key={p.id} className="flex items-center gap-3 mb-3">
+                    <div className="w-20 text-xs text-white/70">{p.name}</div>
+                    <input type="password" value={apiKeys[p.id]} onChange={e => updateKey(p.id, e.target.value)} placeholder="API Key" className="flex-1 bg-black border border-[#4a0e0e] rounded-2xl px-4 py-2 text-sm font-mono" />
+                    <button onClick={() => setCurrentProvider(p.id)} className={`text-xs px-3 py-1 rounded-2xl border ${currentProvider === p.id ? 'border-[#d4af37] bg-[#d4af37]/10' : 'border-white/20'}`}>Use</button>
                   </div>
-                  <button onClick={() => setApiLog([])} className="text-xs px-3 py-1 hover:bg-white/5 rounded-xl">Clear</button>
+                ))}
+              </div>
+
+              <div>
+                <div className="flex items-center gap-2 mb-3 text-[#d4af37]"><Zap size={16} /> <span className="font-medium tracking-widest text-xs">PARAMETERS</span></div>
+                <div className="mb-4">
+                  <div className="flex justify-between text-sm mb-1"><span>Temperature</span><span className="font-mono text-[#d4af37]">{settings.temperature}</span></div>
+                  <input type="range" min="0" max="2" step="0.1" value={settings.temperature} onChange={e=>updateSetting('temperature', parseFloat(e.target.value))} className="w-full accent-[#d4af37]" />
                 </div>
-                <div className="bg-black border border-[#4a0e0e] rounded-3xl p-4 h-40 overflow-y-auto font-mono text-xs text-white/70 space-y-1">
-                  {apiLog.length === 0 ? (
-                    <div className="text-white/40 italic">No API calls yet. Send a message to see logs.</div>
-                  ) : (
-                    apiLog.map((log, i) => <div key={i}>{log}</div>)
-                  )}
+                <div className="grid grid-cols-2 gap-3">
+                  <div><div className="text-xs mb-1">Max Tokens</div><input type="number" value={settings.maxTokens} onChange={e=>updateSetting('maxTokens', parseInt(e.target.value))} className="w-full bg-black border border-[#4a0e0e] rounded-2xl px-3 py-2 text-sm" /></div>
+                  <div><div className="text-xs mb-1">Top P</div><input type="number" step="0.05" value={settings.topP} onChange={e=>updateSetting('topP', parseFloat(e.target.value))} className="w-full bg-black border border-[#4a0e0e] rounded-2xl px-3 py-2 text-sm" /></div>
+                </div>
+              </div>
+
+              <div>
+                <div className="flex items-center gap-2 mb-2 text-[#d4af37]"><MessageSquare size={16} /> <span className="font-medium tracking-widest text-xs">SYSTEM PROMPT</span></div>
+                <textarea value={settings.systemPrompt} onChange={e=>updateSetting('systemPrompt', e.target.value)} className="w-full h-28 bg-black border border-[#4a0e0e] rounded-3xl p-4 text-sm resize-y font-mono" />
+              </div>
+
+              <div>
+                <div className="flex justify-between items-center mb-2">
+                  <div className="flex items-center gap-2 text-[#d4af37]"><span className="font-medium tracking-widest text-xs">API LOG</span></div>
+                  <button onClick={()=>setApiLog([])} className="text-xs">Clear</button>
+                </div>
+                <div className="bg-black border border-[#4a0e0e] rounded-3xl p-3 h-32 overflow-y-auto text-xs font-mono text-white/70">
+                  {apiLog.length === 0 ? <span className="text-white/40">No calls yet</span> : apiLog.map((l,i)=><div key={i}>{l}</div>)}
                 </div>
               </div>
             </div>
 
-            <div className="p-6 border-t border-[#4a0e0e] flex justify-end gap-3">
-              <button 
-                onClick={() => setShowSettings(false)}
-                className="px-8 py-3 rounded-2xl hover:bg-white/5 transition-colors"
-              >
-                Close
-              </button>
-              <button 
-                onClick={() => {
-                  setShowSettings(false);
-                }}
-                className="px-8 py-3 bg-[#d4af37] text-black rounded-2xl font-medium hover:bg-[#e8c36b] transition-all"
-              >
-                Done
-              </button>
+            <div className="p-5 border-t border-[#4a0e0e] flex gap-3">
+              <button onClick={() => setShowSettings(false)} className="flex-1 py-3 rounded-2xl hover:bg-white/5">Close</button>
+              <button onClick={() => setShowSettings(false)} className="flex-1 py-3 bg-[#d4af37] text-black rounded-2xl font-medium">Save</button>
             </div>
           </div>
         </div>
